@@ -1,0 +1,132 @@
+version: "3.9"
+
+# ─── 1. Общие переменные окружения (якорь) ──────────────────────────────
+x-kafka-env: &kafka-env
+  # Один и тот же UUID во всех сервисах; хранится в .env
+  CLUSTER_ID: oIN7jCltQFaDgQWgDZKuxA
+
+  # Весь контроллерный кворум
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@controller1:9093,2@controller2:9093,3@controller3:9093
+
+  # Обязательное свойство — должно быть на *каждом* узле
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+  # Сопоставление имён и протоколов
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+  KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+# ─── 2. Общие настройки контейнера (якорь) ──────────────────────────────
+x-kafka-base: &kafka-base
+  image: apache/kafka:4.0.0
+  networks: [kafka_net]
+  restart: on-failure          # чтобы перезапускались после format
+  # каждому сервису ниже добавляем свой docker-volume
+  # (объявим их в секции volumes)
+
+services:
+  # ---------------- Контроллеры ----------------
+  controller1:
+    <<: *kafka-base
+    volumes: [controller1-data:/var/lib/kafka/data]
+    hostname: controller1
+    environment:
+      <<: *kafka-env
+      KAFKA_PROCESS_ROLES: controller
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9093
+
+  controller2:
+    <<: *kafka-base
+    volumes: [controller2-data:/var/lib/kafka/data]
+    hostname: controller2
+    environment:
+      <<: *kafka-env
+      KAFKA_PROCESS_ROLES: controller
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9093
+
+  controller3:
+    <<: *kafka-base
+    volumes: [controller3-data:/var/lib/kafka/data]
+    hostname: controller3
+    environment:
+      <<: *kafka-env
+      KAFKA_PROCESS_ROLES: controller
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: CONTROLLER://0.0.0.0:9093
+
+  # ---------- broker1 ----------
+  broker1:
+    <<: *kafka-base
+    hostname: broker1
+    ports: [ "9094:9094" ]           # наружу тот же порт 9094
+    volumes: [ broker1-data:/var/lib/kafka/data ]
+
+    environment:
+      <<: *kafka-env
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_NODE_ID: 4
+
+      # — listeners —
+      KAFKA_LISTENERS: |
+        PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: |
+        PLAINTEXT://broker1:9092,EXTERNAL://localhost:9094
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: |
+        CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+  # ---------- broker2 ----------
+  broker2:
+    <<: *kafka-base
+    depends_on: [controller1, controller2, controller3]
+    hostname: broker2
+    ports: ["9095:9095"]          # тот же номер и внутри, и снаружи
+    volumes: [broker2-data:/var/lib/kafka/data]
+
+    environment:
+      <<: *kafka-env
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_NODE_ID: 5
+      #external and security only for external producers and consumers, not for producers and consumers inside cont
+      KAFKA_LISTENERS: |
+        PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:9095
+      KAFKA_ADVERTISED_LISTENERS: |
+        PLAINTEXT://broker2:9092,EXTERNAL://localhost:9095
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: |
+        CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+  # ---------- broker3 ----------
+  broker3:
+    <<: *kafka-base
+    depends_on: [controller1, controller2, controller3]
+    hostname: broker3
+    ports: ["9096:9096"]
+    volumes: [broker3-data:/var/lib/kafka/data]
+
+    environment:
+      <<: *kafka-env
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_NODE_ID: 6
+      KAFKA_LISTENERS: |
+        PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:9096
+      KAFKA_ADVERTISED_LISTENERS: |
+        PLAINTEXT://broker3:9092,EXTERNAL://localhost:9096
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: |
+        CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+
+networks:
+  kafka_net:
+    driver: bridge
+
+volumes:               # объявляем именованные тома (Docker сам их создаст с нужными правами)
+  controller1-data:
+  controller2-data:
+  controller3-data:
+  broker1-data:
+  broker2-data:
+  broker3-data:
